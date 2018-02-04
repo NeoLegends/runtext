@@ -1,0 +1,5 @@
+- actions:
+    command: rclone -V
+  name: Test
+  triggers:
+    wifi: R56
