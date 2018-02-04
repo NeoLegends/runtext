@@ -1,6 +1,6 @@
 use std::io;
 
-use futures;
+use futures::future;
 use futures::prelude::*;
 use futures_stream_select_all::select_all;
 use serde_yaml::Value;
@@ -12,6 +12,8 @@ use context::{Context, TriggerBehavior};
 use triggers::{Activity, Trigger};
 use triggers::wifi::{TRIGGER_NAME as WIFI_TRIGGER_NAME, WifiTrigger};
 
+/// Drives the given context listening for evidence sources and
+/// executing actions as required.
 pub fn drive(ctx: Context, handle: Handle) -> io::Result<Box<Future<Item = (), Error = ()>>> {
     let mut actions = ctx.actions.iter()
         .map(|(key, config)| get_action(key, config))
@@ -33,21 +35,30 @@ pub fn drive(ctx: Context, handle: Handle) -> io::Result<Box<Future<Item = (), E
                 Activity::Inactive => activity_counter -= 1,
             }
 
-            if (ctx.trigger_behavior == TriggerBehavior::And && activity_counter == ctx.triggers.len()) ||
-                (ctx.trigger_behavior == TriggerBehavior::Or && activity_counter > 0 && prev_act_counter == 0) {
-                for action in actions.iter_mut() {
-                    let _ = action.enter();
-                }
-            } else {
-                for action in actions.iter_mut() {
-                    let _ = action.leave();
-                }
-            }
+            let is_all_active_and = ctx.trigger_behavior == TriggerBehavior::And &&
+                activity_counter == ctx.triggers.len();
+            let is_or_and_has_active = ctx.trigger_behavior == TriggerBehavior::Or &&
+                activity_counter > 0 && prev_act_counter == 0;
 
-            futures::finished(())
+            if is_all_active_and || is_or_and_has_active {
+                let enter_all = actions.iter_mut()
+                    .map(|act| act.enter())
+                    .collect::<Vec<_>>();
+                let fut = future::join_all(enter_all)
+                    .map(|_| ());
+
+                Box::new(fut) as Box<Future<Item = (), Error = io::Error>>
+            } else {
+                let leave_all = actions.iter_mut()
+                    .map(|act| act.leave())
+                    .collect::<Vec<_>>();
+                let fut = future::join_all(leave_all)
+                    .map(|_| ());
+
+                Box::new(fut) as Box<Future<Item = (), Error = io::Error>>
+            }
         })
-        .map(|_| ())
-        .map_err(|_| ());
+        .map_err(|err| eprintln!("Experienced error while driving context: {:?}.", err));
 
     Ok(Box::new(driver))
 }

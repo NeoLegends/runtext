@@ -87,7 +87,7 @@ impl Stream for WifiStream {
         try_ready!(self.timeout.poll());
         self.timeout.reset(Instant::now() + Duration::from_millis(5000));
 
-        let new_ssid = Self::get_wifi_name()?;
+        let new_ssid = Self::get_wifi_name().ok().and_then(|v| v);
         match new_ssid {
             Some(ssid) => {
                 let is_same = ssid == self.name;
@@ -124,6 +124,6 @@ mod tests {
 
     #[test]
     fn wifi_name() {
-        get_wifi_name().unwrap();
+        WifiStream::get_wifi_name().unwrap();
     }
 }

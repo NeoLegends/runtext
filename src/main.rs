@@ -58,7 +58,6 @@ fn main() {
                 .help("The path to the pid file for daemonization.")
                 .short("p")
                 .long("pid")
-                .required(true)
                 .default_value(&default_pid_file)
                 .takes_value(true)
                 .global(true)

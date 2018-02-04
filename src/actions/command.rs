@@ -1,6 +1,8 @@
 use std::io;
 use std::process::{Child, Command, Stdio};
 
+use futures::future;
+use futures::prelude::*;
 use serde_yaml::Value;
 
 use super::Action;
@@ -30,6 +32,15 @@ impl CommandAction {
     pub fn from_config(value: &Value) -> io::Result<Self> {
         match *value {
             Value::String(ref cmd) => Ok(Self::new(cmd.as_ref(), None)),
+            Value::Mapping(ref mapping) => {
+                let enter = mapping.get(&Value::String("enter".to_owned()))
+                    .and_then(|v| v.as_str())
+                    .ok_or(io::Error::new(io::ErrorKind::InvalidData, "Missing enter command key."))?;
+                let exit = mapping.get(&Value::String("leave".to_owned()))
+                    .and_then(|v| v.as_str());
+
+                Ok(Self::new(enter, exit))
+            },
             _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Unknown configuration format"))
         }
     }
@@ -49,16 +60,14 @@ impl CommandAction {
 
         command
     }
-}
 
-impl Action for CommandAction {
-    fn enter(&mut self) -> io::Result<()> {
+    fn enter_impl(&mut self) -> io::Result<()> {
         self.child = Some(self.enter_command.spawn()?);
 
         Ok(())
     }
 
-    fn leave(&mut self) -> io::Result<()> {
+    fn leave_impl(&mut self) -> io::Result<()> {
         if let Some(mut child) = self.child.take() {
             child.kill()?;
         }
@@ -67,6 +76,16 @@ impl Action for CommandAction {
         }
 
         Ok(())
+    }
+}
+
+impl Action for CommandAction {
+    fn enter(&mut self) -> Box<Future<Item = (), Error = io::Error>> {
+        Box::new(future::result(self.enter_impl()))
+    }
+
+    fn leave(&mut self) -> Box<Future<Item = (), Error = io::Error>> {
+        Box::new(future::result(self.leave_impl()))
     }
 }
 
@@ -80,6 +99,8 @@ impl Drop for CommandAction {
 
 #[cfg(test)]
 mod tests {
+    use serde_yaml::Mapping;
+
     use super::*;
 
     #[cfg(unix)]
@@ -115,7 +136,52 @@ mod tests {
     fn execute_and_kill(cmd: &str) {
         let mut action = CommandAction::new(cmd, None);
 
-        action.enter().unwrap();
-        action.leave().unwrap();
+        action.enter().wait().unwrap();
+        action.leave().wait().unwrap();
+    }
+
+    #[test]
+    fn load_cfg() {
+        let cfg = Value::String("enter".to_owned());
+        CommandAction::from_config(&cfg).unwrap();
+
+        let enter_k = Value::String("enter".to_owned());
+        let leave_k = Value::String("leave".to_owned());
+        let mut map = Mapping::new();
+        map.insert(enter_k, Value::String("enter".to_owned()));
+        map.insert(leave_k, Value::String("enter".to_owned()));
+        let cfg2 = Value::Mapping(map);
+        CommandAction::from_config(&cfg2).unwrap();
+    }
+
+    #[test]
+    fn load_cfg_map_empty_leave() {
+        let cfg = Value::String("enter".to_owned());
+        CommandAction::from_config(&cfg).unwrap();
+
+        let enter_k = Value::String("enter".to_owned());
+        let mut map = Mapping::new();
+        map.insert(enter_k, Value::String("enter".to_owned()));
+        let cfg2 = Value::Mapping(map);
+        CommandAction::from_config(&cfg2).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn load_cfg_fail1() {
+        let cfg = Value::String("".to_owned());
+        CommandAction::from_config(&cfg).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn load_cfg_fail2() {
+        let enter_k = Value::String("enter".to_owned());
+        let leave_k = Value::String("leave".to_owned());
+        let mut map = Mapping::new();
+        map.insert(enter_k, Value::String("".to_owned()));
+        map.insert(leave_k, Value::String("enter".to_owned()));
+        let cfg2 = Value::Mapping(map);
+        CommandAction::from_config(&cfg2).unwrap();
     }
 }

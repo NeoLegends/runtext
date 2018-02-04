@@ -1,5 +1,7 @@
 - actions:
-    command: rclone -V
+    command:
+      enter: touch /tmp/test.txt
+      leave: rm /tmp/test.txt
   name: Test
   triggers:
     wifi: R56
